@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { initializeMcpApiHandler } = require('./lib/mcp-api-handler');
 
 require('dotenv').config();
 const express = require('express');
@@ -50,10 +51,22 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// MCP Server-Sent Events endpoint
-app.get('/sse', sse.init);
+// Initialize MCP Server
+const mcpHandler = initializeMcpApiHandler((server) => {
+  // Register MCP tools here
+  console.log('MCP Server initialized');
+}, {
+  redisUrl: process.env.REDIS_URL,
+  redisPassword: process.env.REDIS_PASSWORD
+});
 
-// Start the server
+// MCP Server-Sent Events endpoint
+app.get('/sse', async (req, res) => {
+  await mcpHandler(req, res);
+});
+
+// Start the server with Redis connection
+// and MCP initialization
 async function startServer() {
   if (redisClient) {
     try {
@@ -61,7 +74,7 @@ async function startServer() {
       console.log('✅ Redis connection established');
       sse.send('MCP Server ready', 'ready');
     } catch (err) {
-    console.error('❌ Failed to connect to Redis:', err);
+      console.error('❌ Failed to connect to Redis:', err);
     }
   }
   app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
