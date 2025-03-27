@@ -12,18 +12,13 @@ const sse = new SSE();
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// MCP Server-Sent Events endpoint
-app.get('/sse', sse.init);
-
 // Simple health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// Handle all other routes by serving the index.html
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// MCP Server-Sent Events endpoint
+app.get('/sse', sse.init);
 
 // Start the server
 app.listen(PORT, () => {
