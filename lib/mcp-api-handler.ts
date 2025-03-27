@@ -1,3 +1,4 @@
+import fs from "fs";
 import getRawBody from "raw-body";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -6,7 +7,7 @@ import { createClient } from "redis";
 import { Socket } from "net";
 import { Readable } from "stream";
 import { ServerOptions } from "@modelcontextprotocol/sdk/server/index.js";
-import vercelJson from "../vercel.json";
+const vercelJson = JSON.parse(fs.readFileSync("../vercel.json", "utf-8"));
 
 interface SerializedRequest {
   requestId: string;
@@ -51,8 +52,6 @@ export function initializeMcpApiHandler(
     parseInt(process.env.REDIS_KEEP_ALIVE, 10) : 5000;
   const pingInterval = process.env.REDIS_PING_INTERVAL ? 
     parseInt(process.env.REDIS_PING_INTERVAL, 10) : 1000;
-  const commandTimeout = process.env.REDIS_COMMAND_TIMEOUT ? 
-    parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) : 5000;
   const heartbeatInterval = process.env.REDIS_HEARTBEAT_INTERVAL ? 
     parseInt(process.env.REDIS_HEARTBEAT_INTERVAL, 10) : 30000;
   const persistenceInterval = process.env.REDIS_PERSISTENCE_INTERVAL ? 
@@ -69,64 +68,51 @@ export function initializeMcpApiHandler(
   let heartbeatIntervalId: NodeJS.Timeout | null = null;
   let persistenceIntervalId: NodeJS.Timeout | null = null;
   
+  // Create base socket configuration
+  const baseSocketConfig: any = {
+     connectTimeout: connectTimeout,
+    reconnectStrategy: (retries: number) => {
+      const delay = Math.min(Math.pow(1.5, retries) * 100, 5000);
+      console.log(`Redis reconnecting in ${delay}ms (attempt ${retries})`);
+      reconnectAttempts = retries;
+      return delay;
+    },
+    keepAlive: keepAlive,
+    noDelay: true
+  };
+
+  // Create socket configuration with proper TLS handling
+  let redisSocketConfig: any = { ...baseSocketConfig };
+  if (redisUrl.startsWith('rediss://')) {
+    if (tlsVerify) {
+      redisSocketConfig = { ...redisSocketConfig, tls: true };
+    } else {
+      redisSocketConfig = { ...redisSocketConfig, tls: { rejectUnauthorized: false } };
+    }
+  }
+
   // Create Redis clients with maximum persistence settings
+  const redisOptions = {
+    url: redisUrl as string,
+    socket: redisSocketConfig,
+    pingInterval: pingInterval,
+    disableOfflineQueue: false, // Queue commands when disconnected
+    // Force auto-reconnect
+    autoResubscribe: true,
+    autoResendUnfulfilledCommands: true,
+    enableReadyCheck: true,
+    enableOfflineQueue: true,
+    maxRetriesPerRequest: 20, // Retry commands many times
+  };
+
   const redis = createClient({
-    url: redisUrl,
-    socket: {
-      reconnectStrategy: (retries) => {
-        // More aggressive exponential backoff with a maximum delay of 5 seconds
-        const delay = Math.min(Math.pow(1.5, retries) * 100, 5000);
-        console.log(`Redis reconnecting in ${delay}ms (attempt ${retries})`);
-        reconnectAttempts = retries;
-        return delay;
-      },
-      connectTimeout: connectTimeout,
-      keepAlive: keepAlive,
-      noDelay: true, // Disable Nagle's algorithm for faster response
-      tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: tlsVerify } : undefined,
-    },
-    pingInterval: pingInterval,
-    disableOfflineQueue: false, // Queue commands when disconnected
-    commandTimeout: commandTimeout,
-    retryStrategy: (times) => {
-      // Very aggressive retry strategy for commands
-      return Math.min(times * 100, 2000);
-    },
-    // Force auto-reconnect
-    autoResubscribe: true,
-    autoResendUnfulfilledCommands: true,
-    enableReadyCheck: true,
-    enableOfflineQueue: true,
-    maxRetriesPerRequest: 20, // Retry commands many times
+    ...redisOptions,
+    socket: { ...redisSocketConfig,
+ reconnectStrategy: (times: number) => Math.min(times * 100, 2000) }
   });
-  
-  const redisPublisher = createClient({
-    url: redisUrl,
-    socket: {
-      reconnectStrategy: (retries) => {
-        // More aggressive exponential backoff with a maximum delay of 5 seconds
-        const delay = Math.min(Math.pow(1.5, retries) * 100, 5000);
-        console.log(`Redis publisher reconnecting in ${delay}ms (attempt ${retries})`);
-        return delay;
-      },
-      connectTimeout: connectTimeout,
-      keepAlive: keepAlive,
-      noDelay: true, // Disable Nagle's algorithm for faster response
-      tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: tlsVerify } : undefined,
-    },
-    pingInterval: pingInterval,
-    disableOfflineQueue: false, // Queue commands when disconnected
-    commandTimeout: commandTimeout,
-    retryStrategy: (times) => {
-      // Very aggressive retry strategy for commands
-      return Math.min(times * 100, 2000);
-    },
-    // Force auto-reconnect
-    autoResubscribe: true,
-    autoResendUnfulfilledCommands: true,
-    enableReadyCheck: true,
-    enableOfflineQueue: true,
-    maxRetriesPerRequest: 20, // Retry commands many times
+    const redisPublisher = createClient({
+    ...redisOptions,
+    socket: { ...redisSocketConfig, reconnectStrategy: (times: number) => Math.min(times * 100, 2000) }
   });
   
   // Enhanced event listeners
@@ -497,47 +483,44 @@ interface FakeIncomingMessageOptions {
   socket?: Socket;
 }
 
-// Create a fake IncomingMessage
-function createFakeIncomingMessage(
-  options: FakeIncomingMessageOptions = {}
-): IncomingMessage {
-  const {
-    method = "GET",
-    url = "/",
-    headers = {},
-    body = null,
-    socket = new Socket(),
-  } = options;
-
-  // Create a readable stream that will be used as the base for IncomingMessage
-  const readable = new Readable();
-  readable._read = (): void => {}; // Required implementation
-
-  // Add the body content if provided
-  if (body) {
-    if (typeof body === "string") {
-      readable.push(body);
-    } else if (Buffer.isBuffer(body)) {
-      readable.push(body);
-    } else {
-      readable.push(JSON.stringify(body));
-    }
-    readable.push(null); // Signal the end of the stream
-  }
-
-  // Create the IncomingMessage instance
+export function createFakeIncomingMessage({
+  method = "GET",
+  url = "/",
+  headers = {},
+  body = null,
+  socket = new Socket(),
+}: FakeIncomingMessageOptions): IncomingMessage {
   const req = new IncomingMessage(socket);
-
-  // Set the properties
   req.method = method;
   req.url = url;
   req.headers = headers;
 
-  // Copy over the stream methods
-  req.push = readable.push.bind(readable);
-  req.read = readable.read.bind(readable);
-  req.on = readable.on.bind(readable);
-  req.pipe = readable.pipe.bind(readable);
+  if (body) {
+    if (typeof body === "string" || Buffer.isBuffer(body)) {
+      const stream = new Readable();
+      stream.push(body);
+      stream.push(null);
+      Object.defineProperty(req, "body", {
+        get() {
+          return body;
+        },
+      });
+      req.push(body);
+      req.push(null);
+    } else if (typeof body === "object") {
+      const stream = new Readable();
+      const json = JSON.stringify(body);
+      stream.push(json);
+      stream.push(null);
+      Object.defineProperty(req, "body", {
+        get() {
+          return json;
+        },
+      });
+      req.push(json);
+      req.push(null);
+    }
+  }
 
   return req;
 }
