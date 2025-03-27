@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -19,6 +20,7 @@ app.use(cors());
 let redisClient;
 if (process.env.REDIS_URL) {
   try {
+    console.log(`Attempting to connect to Redis at: ${process.env.REDIS_URL}`);
     redisClient = redis.createClient({
       url: process.env.REDIS_URL,
       password: process.env.REDIS_PASSWORD,
@@ -52,17 +54,20 @@ app.get('/health', (req, res) => {
 app.get('/sse', sse.init);
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  
+async function startServer() {
   if (redisClient) {
-    redisClient.connect().then(() => {
+    try {
+      await redisClient.connect();
+      console.log('✅ Redis connection established');
       sse.send('MCP Server ready', 'ready');
-    });
-  } else {
-    console.warn('Redis URL not configured - MCP tools will not work');
+    } catch (err) {
+    console.error('❌ Failed to connect to Redis:', err);
+    }
   }
-});
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+startServer();
 
 // Handle process termination
 process.on('SIGINT', () => {
