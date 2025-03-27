@@ -20,30 +20,25 @@ let redisClient;
 if (process.env.REDIS_URL) {
   try {
     redisClient = redis.createClient({
-      url: process.env.REDIS_URL
-,
+      url: process.env.REDIS_URL,
       password: process.env.REDIS_PASSWORD,
       socket: {
         connectTimeout: 5000,
         reconnectStrategy: (retries) => Math.min(retries * 100, 5000)
       }
     });
-  
-   
-  redisClient.on('connect', () => {
+    
+    redisClient.on('connect', () => {
       console.log('✅ Connected to Redis');
     });
-  
-  
-  
-  redisClient.on('error', (err) => {
+    
+    redisClient.on('error', (err) => {
       console.error('❌ Redis connection error:', err);
     });
-}
   } catch (err) {
     console.error('❌ Failed to initialize Redis client:', err);
   }
-
+}
 
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -60,7 +55,7 @@ app.get('/sse', sse.init);
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   
-if (redisClient) {
+  if (redisClient) {
     redisClient.connect().then(() => {
       sse.send('MCP Server ready', 'ready');
     });
