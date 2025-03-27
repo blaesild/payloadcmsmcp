@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const { initializeMcpApiHandler } = require('./lib/mcp-api-handler');
+const { initializeMcpApiHandler } = require('./dist/lib/mcp-api-handler');
 
 require('dotenv').config();
 const express = require('express');

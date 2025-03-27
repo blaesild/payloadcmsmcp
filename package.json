@@ -8,9 +8,10 @@
   },
   "scripts": {
     "test": "echo \"No tests specified\"",
-    "start": "node server.js",
+    "start": "npm run build && node dist/server.js",
     "dev": "node server.js",
     "local": "node server.js",
+    "build": "tsc",
     "prepublishOnly": "npm test"
   },
   "keywords": [
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
     "vercel": "^41.4.0"
   },
   "engines": {
